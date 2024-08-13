@@ -1,0 +1,148 @@
+import torch
+import torch.nn as nn
+import os
+import argparse
+import numpy as np
+import matplotlib.pyplot as plt
+from model.AnomalyTransformer import AnomalyTransformer
+
+def my_kl_loss(p, q):
+    res = p * (torch.log(p + 1e-10) - torch.log(q + 1e-10))
+    return torch.mean(torch.sum(res, dim=-1), dim=1)
+
+class Solver(object):
+    def __init__(self, config):
+        self.__dict__.update(config)
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.build_model()
+
+    def build_model(self):
+        self.model = AnomalyTransformer(win_size=self.win_size, enc_in=self.num_features, c_out=self.num_features, e_layers=3)
+        if torch.cuda.is_available():
+            self.model.cuda()
+        self.load_model()
+
+    def load_model(self):
+        model_path = os.path.join(self.model_save_path, str(self.dataset) + '_checkpoint.pth')
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+
+    def inference(self, input_data):
+        self.model.eval()
+        
+        # Adjust input data to match the model's expected sequence length
+        if input_data.size(1) > self.win_size:
+            input_data = input_data[:, :self.win_size, :]  # Truncate to the model's expected length
+        elif input_data.size(1) < self.win_size:
+            padding = torch.zeros((input_data.size(0), self.win_size - input_data.size(1), input_data.size(2)))
+            input_data = torch.cat([input_data, padding], dim=1)  # Pad to the model's expected length
+        
+        input = input_data.float().to(self.device)
+        output, series, prior, _ = self.model(input)
+
+        temperature = 50
+        criterion = nn.MSELoss(reduction='none')
+        loss = torch.mean(criterion(input, output), dim=-1)
+        series_loss = 0.0
+        prior_loss = 0.0
+        for u in range(len(prior)):
+            if u == 0:
+                series_loss = my_kl_loss(series[u], (
+                        prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                               self.win_size)).detach()) * temperature
+                prior_loss = my_kl_loss(
+                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                            self.win_size)),
+                    series[u].detach()) * temperature
+            else:
+                series_loss += my_kl_loss(series[u], (
+                        prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                               self.win_size)).detach()) * temperature
+                prior_loss += my_kl_loss(
+                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                            self.win_size)),
+                    series[u].detach()) * temperature
+
+        metric = torch.softmax((-series_loss - prior_loss), dim=-1)
+        cri = metric * loss
+        cri = cri.detach().cpu().numpy()
+
+        combined_energy = cri.reshape(-1)
+        thresh = np.percentile(combined_energy, 100 - self.anormly_ratio)
+        print("Threshold :", thresh)
+
+        pred = (combined_energy > thresh).astype(int)
+
+        self.plot_input_reconstructed(input_data.cpu().detach().numpy(), output.cpu().detach().numpy())
+        self.plot_anomalies(input_data.cpu().detach().numpy(), pred)
+
+        return pred
+
+    def plot_input_reconstructed(self, input_data, reconstructed_data):
+        """Plot the input signal and the reconstructed signal separately."""
+        plt.figure(figsize=(14, 10))
+
+        for i in range(input_data.shape[2]):
+            plt.subplot(input_data.shape[2], 1, i + 1)
+            plt.plot(input_data[0, :, i], label=f"Input Signal {i+1}", color='b')
+            plt.plot(reconstructed_data[0, :, i], label=f"Reconstructed Signal {i+1}", color='r')
+            plt.title(f'Signal {i+1}: Input vs Reconstructed')
+            plt.xlabel("Sample Index")
+            plt.ylabel("Value")
+            plt.grid(True)
+            plt.legend()
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_anomalies(self, input_data, predictions):
+        """Plot the anomalies detected in the input signal."""
+        plt.figure(figsize=(14, 10))
+
+        for i in range(input_data.shape[2]):
+            plt.subplot(input_data.shape[2], 1, i + 1)
+            plt.plot(input_data[0, :, i], label=f"Input Signal {i+1}", color='b')
+            anomalies = np.where(predictions == 1)[0]
+            plt.scatter(anomalies, input_data[0, anomalies, i], color='orange', label='Anomaly', marker='x')
+            plt.title(f'Signal {i+1}: Detected Anomalies')
+            plt.xlabel("Sample Index")
+            plt.ylabel("Value")
+            plt.grid(True)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig('input_vs_reconstructed.png')
+
+        plt.tight_layout()
+        plt.show()
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--win_size', type=int, default=5000, help='Window size for the model (match the model training size)')
+    parser.add_argument('--num_features', type=int, default=6, help='Number of features in the input data (excluding the sleep/awake channel)')
+    parser.add_argument('--model_save_path', type=str, required=True, help='Path to the saved model directory')
+    parser.add_argument('--dataset', type=str, required=True, help='Dataset name (used to find the correct checkpoint)')
+    parser.add_argument('--anormly_ratio', type=float, default=1.0, help='Anomaly detection threshold ratio')
+    parser.add_argument('--input_data_path', type=str, required=True, help='Path to the input numpy file (.npy)')
+
+    args = parser.parse_args()
+
+    # Load input data from file
+    data = np.load(args.input_data_path)
+
+    # Remove the seventh channel (sleep/awake) and keep only the first six features
+    data = data[:, :args.num_features]
+
+    # Select just one sample (for example, the first one)
+    input_data = torch.tensor(data[:args.win_size]).unsqueeze(0)  # Ensure the data is in the correct shape [1, sequence_length, num_features]
+
+    # Initialize the Solver
+    solver = Solver(vars(args))
+
+
+
+    # Perform inference
+    predictions = solver.inference(input_data)
+    print("Predictions:", predictions)
+
+if __name__ == "__main__":
+    main()

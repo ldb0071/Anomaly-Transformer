@@ -152,7 +152,8 @@ class Solver(object):
         'input_c': 38,
         'output_c': 38,
         'batch_size': 1024,
-        'model_save_path': 'checkpoints'
+        'model_save_path': 'checkpoints',
+        'anomaly_ratio': 0.9  # Default anomaly ratio
     }
 
     def __init__(self, config):
@@ -291,6 +292,33 @@ class Solver(object):
         self.model.eval()
         input_data = input_data.float().to(self.device)
         with torch.no_grad():
-            output, _, _, _ = self.model(input_data)
+            output, series, prior, _ = self.model(input_data)
+
+        # Calculate reconstruction error
+        criterion = torch.nn.MSELoss(reduction='none')
+        rec_loss = criterion(input_data, output)
+
+        # Calculate series and prior losses
+        series_loss = torch.zeros_like(rec_loss)
+        prior_loss = torch.zeros_like(rec_loss)
+        temperature = 50
+        for u in range(len(prior)):
+            normalized_prior = prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.win_size)
+            series_loss += my_kl_loss(series[u], normalized_prior.detach()) * temperature
+            prior_loss += my_kl_loss(normalized_prior, series[u].detach()) * temperature
+
+        # Combine the losses
+        combined_loss = torch.mean(series_loss + prior_loss, dim=-1)
+        combined_loss = combined_loss.cpu().numpy().reshape(-1)
+
+        # Determine the anomaly threshold
+        threshold = np.percentile(combined_loss, 100 * (1 - self.anomaly_ratio))
+        print(f"Anomaly detection threshold: {threshold}")
+
+        # Identify anomalies
+        anomalies = combined_loss > threshold
+        print(f"Detected {np.sum(anomalies)} anomalies")
+
         self.plot_signals(input_data.cpu().numpy(), output.cpu().numpy())
-        return output.cpu().numpy()
+        return anomalies
+

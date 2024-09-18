@@ -32,8 +32,22 @@ def main(config):
     if config.mode == 'train':
         print("Starting training...")
         solver.train()
+    elif config.mode == 'test':
+        print("Starting testing...")
+        # Implement the testing logic if required
+        pass
+    elif config.mode == 'inference':
+        print("Starting inference...")
+        if config.inference_data_path:
+            # Load inference data
+            inference_data = np.load(config.inference_data_path)
+            output, loss = solver.inference(inference_data)
+            print(f"Inference completed. Reconstruction Loss: {loss}")
+            print(f"Inference output shape: {output.shape}")
+        else:
+            print("Inference data path not provided. Please specify the path to the input data for inference.")
     else:
-        raise ValueError("Invalid mode. Choose 'train")
+        raise ValueError("Invalid mode. Choose 'train', 'test', or 'inference'.")
 
     return solver
 
@@ -49,7 +63,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=1024, help='Batch size for training')
     parser.add_argument('--pretrained_model', type=str, default=None, help='Path to the pretrained model')
     parser.add_argument('--dataset', type=str, default='AWAKE', help='Dataset to use')
-    parser.add_argument('--mode', type=str, default='train', choices=['train'], help='Running mode: train, test, or inference')
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test', 'inference'], help='Running mode: train, test, or inference')
     parser.add_argument('--data_path', type=str, default='./dataset/awake', help='Path to the dataset')
     parser.add_argument('--model_save_path', type=str, default='checkpoints', help='Path to save the trained models')
     parser.add_argument('--anormly_ratio', type=float, default=4.00, help='Anomaly ratio')

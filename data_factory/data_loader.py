@@ -268,7 +268,7 @@ class sleepLoader(object):
 
 
 
-def get_loader_segment(data_path, batch_size, win_size=100, step=100, mode='train', dataset='AWAKE'):
+def get_loader_segment(data_path, batch_size, win_size=100, step=100, mode='train', dataset=''):
     if dataset == 'SMD':
         dataset = SMDSegLoader(data_path, win_size, step, mode)
     elif dataset == 'MSL':
@@ -280,7 +280,7 @@ def get_loader_segment(data_path, batch_size, win_size=100, step=100, mode='trai
     elif dataset == 'AWAKE':
         dataset = AwakeLoader(data_path, win_size, step, mode)
     elif dataset == 'SLEEP':
-            dataset = AwakeLoader(data_path, win_size, step, mode)
+            dataset = sleepLoader(data_path, win_size, step, mode)
 
     else:
         raise ValueError(f"Dataset '{dataset}' is not recognized.")

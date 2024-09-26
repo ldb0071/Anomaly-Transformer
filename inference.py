@@ -1,10 +1,10 @@
-
 import torch
 import torch.nn as nn
 import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+import json
 from model.AnomalyTransformer import AnomalyTransformer
 
 def my_kl_loss(p, q):
@@ -18,6 +18,7 @@ class Solver(object):
         self.build_model()
 
     def build_model(self):
+        # The model expects input with all features
         self.model = AnomalyTransformer(win_size=self.win_size, enc_in=self.num_features, c_out=self.num_features, e_layers=3)
         if torch.cuda.is_available():
             self.model.cuda()
@@ -33,7 +34,7 @@ class Solver(object):
         # Initialize list to store anomaly predictions for the full signal
         combined_energy = []
 
-        # Process the full input signal in chunks of win_size
+        # Process the full input signal in chunks of win_size over the time dimension
         with torch.no_grad():
             for start_idx in range(0, input_data.size(1), self.win_size):
                 end_idx = min(start_idx + self.win_size, input_data.size(1))
@@ -80,62 +81,88 @@ class Solver(object):
         # Combine energy across all segments to form the complete anomaly score
         combined_energy = np.concatenate(combined_energy, axis=0)
         
-        # Determine anomaly threshold
+        # Calculate the dynamic threshold based on the percentile of combined energy
         thresh = np.percentile(combined_energy, 100 - self.anormly_ratio)
-        print("Threshold :", thresh)
+        print("Calculated Threshold:", thresh)
 
-        # Identify anomalies
+        # Apply only the anomaly threshold to predict anomalies
         pred = (combined_energy > thresh).astype(int)
 
-        # Plot input vs reconstructed signal and anomalies
-        self.plot_input_reconstructed(input_data.cpu().detach().numpy(), combined_energy)
-        self.plot_anomalies(input_data.cpu().detach().numpy(), pred)
+        # Plot anomalies for both windowed and full signals
+        self.plot_anomalies_in_batches(input_data.cpu().detach().numpy(), pred)
+        self.plot_full_signal_anomalies(input_data.cpu().detach().numpy(), pred)
+
+        # Export results to JSON
+        self.export_to_json(input_data.cpu().detach().numpy(), combined_energy, pred)
 
         return pred
 
-    def plot_input_reconstructed(self, input_data, combined_energy):
-        """Plot the input signal and the reconstructed signal separately."""
-        plt.figure(figsize=(14, 10))
+    def export_to_json(self, input_data, combined_energy, pred):
+        """Export anomaly predictions and energy values to a JSON file."""
+        results = {
+            "anomaly_scores": combined_energy.tolist(),
+            "predictions": pred.tolist()
+        }
 
-        for i in range(input_data.shape[2]):
-            plt.subplot(input_data.shape[2], 1, i + 1)
-            plt.plot(input_data[0, :, i], label=f"Input Signal {i+1}", color='b')
-            plt.title(f'Signal {i+1}: Input')
+        # Export JSON file
+        with open("anomaly_detection_results.json", "w") as json_file:
+            json.dump(results, json_file, indent=4)
+
+        print("Inference results exported to anomaly_detection_results.json.")
+
+    def plot_anomalies_in_batches(self, input_data, predictions):
+        """Plot the anomalies detected in the input signal in windows of 50 signals."""
+        num_signals = input_data.shape[2]
+        window_size = 50  # Check anomalies in windows of 50 points
+
+        for i in range(num_signals):
+            plt.figure(figsize=(10, 6))
+            signal = input_data[0, :, i]
+            plt.plot(signal, label=f"Signal {i + 1}", color='b')
+
+            for start_idx in range(0, len(signal), window_size):
+                end_idx = min(start_idx + window_size, len(signal))
+                window_anomalies = np.where(predictions[start_idx:end_idx] == 1)[0] + start_idx
+                if len(window_anomalies) > 0:
+                    plt.scatter(window_anomalies, signal[window_anomalies], color='orange', marker='x')
+
+            plt.title(f'Signal {i + 1}: Detected Anomalies (Windows of 50)')
             plt.xlabel("Sample Index")
             plt.ylabel("Value")
             plt.grid(True)
-            plt.legend()
+            plt.tight_layout()  # Removed legend repetition
+            plt.savefig(f'detected_anomalies_window_signal_{i + 1}.png')
+            plt.show()
 
-        plt.tight_layout()
-        plt.show()
+    def plot_full_signal_anomalies(self, input_data, predictions):
+        """Plot the full signal and anomalies for each signal."""
+        num_signals = input_data.shape[2]
 
-    def plot_anomalies(self, input_data, predictions):
-        """Plot the anomalies detected in the input signal."""
-        plt.figure(figsize=(14, 10))
-
-        for i in range(input_data.shape[2]):
-            plt.subplot(input_data.shape[2], 1, i + 1)
-            plt.plot(input_data[0, :, i], label=f"Input Signal {i+1}", color='b')
+        for i in range(num_signals):
+            plt.figure(figsize=(10, 6))
+            signal = input_data[0, :, i]
+            plt.plot(signal, label=f"Signal {i + 1}", color='b')
             anomalies = np.where(predictions == 1)[0]
-            plt.scatter(anomalies, input_data[0, anomalies, i], color='orange', label='Anomaly', marker='x')
-            plt.title(f'Signal {i+1}: Detected Anomalies')
+
+            if len(anomalies) > 0:
+                plt.scatter(anomalies, signal[anomalies], color='orange', marker='x')
+
+            plt.title(f'Signal {i + 1}: Detected Anomalies (Full Signal)')
             plt.xlabel("Sample Index")
             plt.ylabel("Value")
             plt.grid(True)
-            plt.legend()
-
-        plt.tight_layout()
-        plt.savefig('input_vs_reconstructed.png')
-        plt.show()
+            plt.tight_layout()  # Removed legend repetition
+            plt.savefig(f'detected_anomalies_full_signal_{i + 1}.png')
+            plt.show()
 
 def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--win_size', type=int, default=5000, help='Window size for the model (match the model training size)')
-    parser.add_argument('--num_features', type=int, default=6, help='Number of features in the input data')
+    parser.add_argument('--num_features', type=int, help='Number of features in the input data')
     parser.add_argument('--model_save_path', type=str, required=True, help='Path to the saved model directory')
     parser.add_argument('--dataset', type=str, required=True, help='Dataset name (used to find the correct checkpoint)')
-    parser.add_argument('--anormly_ratio', type=float, default=1.0, help='Anomaly detection threshold ratio')
+    parser.add_argument('--anormly_ratio', type=float, default=1.0, help='Anomaly detection threshold ratio (percentile)')
     parser.add_argument('--input_data_path', type=str, required=True, help='Path to the input numpy file (.npy)')
 
     args = parser.parse_args()
@@ -143,11 +170,11 @@ def main():
     # Load input data from file
     data = np.load(args.input_data_path)
 
-    # Remove the seventh channel (sleep/awake) and keep only the first six features
-    data = data[:, :args.num_features]
-
     # Convert the data into torch tensor and add batch dimension
     input_data = torch.tensor(data).unsqueeze(0)  # Shape [1, full_sequence_length, num_features]
+    
+    # Automatically determine the number of features
+    args.num_features = data.shape[1]  # Set num_features dynamically based on data
 
     # Initialize the Solver
     solver = Solver(vars(args))

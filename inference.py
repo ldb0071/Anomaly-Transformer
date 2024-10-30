@@ -81,11 +81,11 @@ class Solver(object):
         # Combine energy across all segments to form the complete anomaly score
         combined_energy = np.concatenate(combined_energy, axis=0)
         
-        # Calculate the dynamic threshold based on the percentile of combined energy
-        thresh = np.percentile(combined_energy, 100 - self.anormly_ratio)
-        print("Calculated Threshold:", thresh)
+        # Use a fixed threshold instead of a dynamic one
+        thresh = self.fixed_threshold
+        print("Using Fixed Threshold:", thresh)
 
-        # Apply only the anomaly threshold to predict anomalies
+        # Apply the fixed anomaly threshold to predict anomalies
         pred = (combined_energy > thresh).astype(int)
 
         # Plot anomalies for both windowed and full signals
@@ -162,7 +162,7 @@ def main():
     parser.add_argument('--num_features', type=int, help='Number of features in the input data')
     parser.add_argument('--model_save_path', type=str, required=True, help='Path to the saved model directory')
     parser.add_argument('--dataset', type=str, required=True, help='Dataset name (used to find the correct checkpoint)')
-    parser.add_argument('--anormly_ratio', type=float, default=1.0, help='Anomaly detection threshold ratio (percentile)')
+    parser.add_argument('--fixed_threshold', type=float, required=True, help='Fixed anomaly detection threshold')
     parser.add_argument('--input_data_path', type=str, required=True, help='Path to the input numpy file (.npy)')
 
     args = parser.parse_args()

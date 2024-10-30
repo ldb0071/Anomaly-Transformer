@@ -1,8 +1,9 @@
 import os
 import argparse
-import torch
+
 from torch.backends import cudnn
 from utils.utils import *
+
 from solver import Solver
 
 
@@ -12,28 +13,14 @@ def str2bool(v):
 
 def main(config):
     cudnn.benchmark = True
-
-    # Ensure model save path exists
-    if not os.path.exists(config.model_save_path):
-        os.makedirs(config.model_save_path)
-
-    # Initialize solver
+    if (not os.path.exists(config.model_save_path)):
+        mkdir(config.model_save_path)
     solver = Solver(vars(config))
 
-    # Load pretrained model if specified
-    if config.pretrained_model:
-        if os.path.exists(config.pretrained_model):
-            solver.model.load_state_dict(torch.load(config.pretrained_model))
-            print(f"Loaded pretrained model from {config.pretrained_model}")
-        else:
-            print(f"Pretrained model path {config.pretrained_model} not found. Starting from scratch.")
-
-    # Train, test, or inference mode
     if config.mode == 'train':
-        print("Starting training...")
         solver.train()
-    else:
-        raise ValueError("Invalid mode. Choose 'train")
+    elif config.mode == 'test':
+        solver.test()
 
     return solver
 
@@ -41,18 +28,19 @@ def main(config):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    # Training hyperparameters
-    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-    parser.add_argument('--num_epochs', type=int, default=10, help='Number of training epochs')
-    parser.add_argument('--k', type=int, default=3, help='Coefficient for loss function')
-    parser.add_argument('--win_size', type=int, default=100, help='Window size for input sequences')
-    parser.add_argument('--batch_size', type=int, default=1024, help='Batch size for training')
-    parser.add_argument('--pretrained_model', type=str, default=None, help='Path to the pretrained model')
-    parser.add_argument('--dataset', type=str, default='AWAKE', help='Dataset to use')
-    parser.add_argument('--mode', type=str, default='train', choices=['train'], help='Running mode: train, test, or inference')
-    parser.add_argument('--data_path', type=str, default='./dataset/awake', help='Path to the dataset')
-    parser.add_argument('--model_save_path', type=str, default='checkpoints', help='Path to save the trained models')
-    parser.add_argument('--anormly_ratio', type=float, default=4.00, help='Anomaly ratio')
+    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--k', type=int, default=3)
+    parser.add_argument('--win_size', type=int, default=100)
+    parser.add_argument('--input_c', type=int, default=38)
+    parser.add_argument('--output_c', type=int, default=38)
+    parser.add_argument('--batch_size', type=int, default=1024)
+    parser.add_argument('--pretrained_model', type=str, default=None)
+    parser.add_argument('--dataset', type=str, default='credit')
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
+    parser.add_argument('--data_path', type=str, default='./dataset/creditcard_ts.csv')
+    parser.add_argument('--model_save_path', type=str, default='checkpoints')
+    parser.add_argument('--anormly_ratio', type=float, default=4.00)
 
     config = parser.parse_args()
 
@@ -61,5 +49,4 @@ if __name__ == '__main__':
     for k, v in sorted(args.items()):
         print('%s: %s' % (str(k), str(v)))
     print('-------------- End ----------------')
-
     main(config)
